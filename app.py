@@ -1,167 +1,203 @@
-import google.generativeai as genai
 import streamlit as st
-import os
 import pandas as pd
 from datetime import datetime
-import base64
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-
-genai.configure(api_key=GEMINI_API_KEY)
-
-ai_model = genai.GenerativeModel("gemini-2.5-flash-lite")
+from cryptography.fernet import Fernet
+from supabase import create_client
+import google.generativeai as genai
+import os
+import tempfile
 
 st.set_page_config(
-    page_title="Family Vault AI | Made by Parth",
+    page_title="Family Vault AI | Secure Edition",
     page_icon="🔐",
     layout="wide"
 )
 
-APP_PASSWORD = "family123"
-DOCUMENT_FOLDER = "documents"
-DATA_FILE = "documents_data.csv"
+# Secrets
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+ENCRYPTION_KEY = st.secrets["ENCRYPTION_KEY"]
 
-os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
+BUCKET_NAME = "family-documents"
+APP_PASSWORD = "family123"  # later we can hash this also
 
-required_columns = [
-    "File Name", "Owner", "Document Type", "Notes",
-    "Upload Date", "Expiry Date", "File Path"
-]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+fernet = Fernet(ENCRYPTION_KEY.encode())
 
-if not os.path.exists(DATA_FILE):
-    pd.DataFrame(columns=required_columns).to_csv(DATA_FILE, index=False)
-else:
-    df = pd.read_csv(DATA_FILE)
-    for col in required_columns:
-        if col not in df.columns:
-            df[col] = ""
-    df = df[required_columns]
-    df.to_csv(DATA_FILE, index=False)
+genai.configure(api_key=GEMINI_API_KEY)
+ai_model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
+# ---------- CSS ----------
 st.markdown("""
 <style>
+.stApp {
+    background: linear-gradient(135deg, #f8fafc, #dbeafe, #ede9fe);
+}
+.main-title {
+    text-align:center;
+    font-size:48px;
+    font-weight:900;
+    background: linear-gradient(90deg, #1d4ed8, #7c3aed, #db2777);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
+}
+.subtitle {
+    text-align:center;
+    color:#334155;
+    font-size:19px;
+    margin-bottom:25px;
+}
+.card {
+    background:white;
+    color:#111827;
+    padding:22px;
+    border-radius:18px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.12);
+    margin-bottom:18px;
+}
+.creator {
+    text-align:center;
+    color:#7c3aed;
+    font-weight:800;
+}
+.footer {
+    text-align:center;
+    color:#475569;
+    margin-top:40px;
+}
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #111827, #312e81);
 }
-
-/* Sidebar text */
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] span,
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] div {
     color: white !important;
 }
-
-/* Logout button background */
 [data-testid="stSidebar"] button {
-    background-color: white !important;
-    border-radius: 10px !important;
-    font-weight: 700 !important;
+    background-color:white !important;
+    border-radius:10px !important;
+    font-weight:700 !important;
 }
-
-/* Logout button text */
 [data-testid="stSidebar"] button p,
 [data-testid="stSidebar"] button span,
 [data-testid="stSidebar"] button div {
-    color: black !important;
+    color:black !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ---------- Helpers ----------
+def get_documents():
+    response = supabase.table("documents").select("*").execute()
+    data = response.data
+    return pd.DataFrame(data) if data else pd.DataFrame(columns=[
+        "id", "file_name", "owner", "document_type", "notes",
+        "upload_date", "expiry_date", "storage_path"
+    ])
+
+def upload_encrypted_file(uploaded_file, storage_path):
+    file_bytes = uploaded_file.getvalue()
+    encrypted_bytes = fernet.encrypt(file_bytes)
+
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(encrypted_bytes)
+        tmp_path = tmp.name
+
+    with open(tmp_path, "rb") as f:
+        supabase.storage.from_(BUCKET_NAME).upload(
+            storage_path,
+            f,
+            file_options={"content-type": "application/octet-stream"}
+        )
+
+    os.remove(tmp_path)
+
+def download_decrypted_file(storage_path):
+    encrypted_bytes = supabase.storage.from_(BUCKET_NAME).download(storage_path)
+    decrypted_bytes = fernet.decrypt(encrypted_bytes)
+    return decrypted_bytes
+
+def delete_file(storage_path):
+    supabase.storage.from_(BUCKET_NAME).remove([storage_path])
+
+# ---------- Login ----------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
-# LOGIN PAGE
 if not st.session_state.logged_in:
     st.markdown('<div class="main-title">🔐 Family Vault AI</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">A secure, smart and colorful family document vault</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitle">Secure encrypted document locker for your family</div>', unsafe_allow_html=True)
     st.markdown('<div class="creator">Designed & Developed by Parth 🚀</div>', unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 1.4, 1])
-
     with col2:
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("🔑 Unlock Family Vault")
+        password = st.text_input("Enter Password", type="password")
 
-        st.markdown("### 👨‍👩‍👧‍👦 Welcome to Your Family Vault")
-        st.write("Store Aadhaar, PAN, marksheets, certificates, insurance papers and more in one secure place.")
-
-        password = st.text_input("🔑 Enter Vault Password", type="password")
-
-        if st.button("🚀 Unlock Vault"):
+        if st.button("🚀 Login", use_container_width=True):
             if password == APP_PASSWORD:
                 st.session_state.logged_in = True
                 st.rerun()
             else:
-                st.error("Wrong password. Please try again.")
+                st.error("Wrong password.")
 
-        st.info("Security enabled with password protection.")
+        st.info("Files are encrypted before cloud storage.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.stop()
 
-# MAIN PAGE
+# ---------- Main ----------
 st.markdown('<div class="main-title">👨‍👩‍👧‍👦 Family Vault AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Securely manage, search, download and track important family documents</div>', unsafe_allow_html=True)
-st.markdown('<div class="creator">Made by Parth | Smart Family Document Manager</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Encrypted cloud document storage with AI assistant</div>', unsafe_allow_html=True)
+st.markdown('<div class="creator">Made by Parth 🚀</div>', unsafe_allow_html=True)
 
-st.sidebar.markdown("""
-## 👨‍👩‍👧‍👦 Family Vault
-### Made by Parth 🚀
-""")
+st.sidebar.markdown("## 👨‍👩‍👧‍👦 Family Vault")
+st.sidebar.markdown("### Made by Parth 🚀")
 
-st.sidebar.markdown("### 🔐 Account")
-
-if st.sidebar.button("🚪 Logout", use_container_width=True, type="primary"):
+if st.sidebar.button("🚪 Logout", use_container_width=True):
     st.session_state.logged_in = False
     st.rerun()
 
-df = pd.read_csv(DATA_FILE)
+df = get_documents()
 
 today = pd.Timestamp.today().normalize()
 soon_date = today + pd.Timedelta(days=60)
 
 expiry_df = df.copy()
-expiry_df["Expiry Date"] = pd.to_datetime(expiry_df["Expiry Date"], errors="coerce")
+if "expiry_date" in expiry_df.columns:
+    expiry_df["expiry_date"] = pd.to_datetime(expiry_df["expiry_date"], errors="coerce")
+else:
+    expiry_df["expiry_date"] = pd.NaT
 
 expiring_soon = expiry_df[
-    (expiry_df["Expiry Date"].notna()) &
-    (expiry_df["Expiry Date"] >= today) &
-    (expiry_df["Expiry Date"] <= soon_date)
+    (expiry_df["expiry_date"].notna()) &
+    (expiry_df["expiry_date"] >= today) &
+    (expiry_df["expiry_date"] <= soon_date)
 ]
 
 expired_docs = expiry_df[
-    (expiry_df["Expiry Date"].notna()) &
-    (expiry_df["Expiry Date"] < today)
+    (expiry_df["expiry_date"].notna()) &
+    (expiry_df["expiry_date"] < today)
 ]
 
-st.markdown("## 📊 Smart Dashboard")
+st.markdown("## 📊 Secure Dashboard")
 
-col1, col2, col3, col4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("📁 Total Documents", len(df))
+c2.metric("👨‍👩‍👧‍👦 Family Members", df["owner"].nunique() if len(df) > 0 else 0)
+c3.metric("📄 Document Types", df["document_type"].nunique() if len(df) > 0 else 0)
+c4.metric("⚠️ Expiring Soon", len(expiring_soon))
 
-col1.metric("📁 Total Documents", len(df))
-col2.metric("👨‍👩‍👧‍👦 Family Members", df["Owner"].nunique() if len(df) > 0 else 0)
-col3.metric("📄 Document Types", df["Document Type"].nunique() if len(df) > 0 else 0)
-col4.metric("⚠️ Expiring Soon", len(expiring_soon))
-
-# AI INSIGHTS
-st.markdown("""
-<div class="ai-card">
-<h3>🤖 AI Smart Insights</h3>
-<ul>
-<li>Keep important identity documents backed up safely.</li>
-<li>Check expiry reminders regularly for passport, insurance and driving license.</li>
-<li>Use clear notes while uploading documents for faster search.</li>
-<li>Delete outdated documents to keep the vault clean.</li>
-</ul>
-</div>
-""", unsafe_allow_html=True)
+st.info("🔐 Secure Mode: Documents are encrypted before being uploaded to private cloud storage.")
 
 if len(expired_docs) > 0:
-    st.error(f"🚨 {len(expired_docs)} document(s) have already expired.")
+    st.error(f"🚨 {len(expired_docs)} document(s) have expired.")
 
 if len(expiring_soon) > 0:
     st.warning(f"⚠️ {len(expiring_soon)} document(s) are expiring within 60 days.")
-
-st.markdown("---")
 
 menu = st.sidebar.radio(
     "📌 Choose Option",
@@ -175,11 +211,17 @@ menu = st.sidebar.radio(
     ]
 )
 
+# ---------- Upload ----------
 if menu == "Upload Document":
-    st.header("📤 Upload New Document")
+    st.header("📤 Upload Encrypted Document")
+
     st.markdown('<div class="card">', unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("Upload PDF/Image", type=["pdf", "jpg", "jpeg", "png"])
+    uploaded_file = st.file_uploader(
+        "Upload PDF/Image",
+        type=["pdf", "jpg", "jpeg", "png"]
+    )
+
     owner = st.text_input("Owner Name")
 
     doc_type = st.selectbox(
@@ -198,59 +240,56 @@ if menu == "Upload Document":
     if has_expiry:
         expiry_date = st.date_input("Select Expiry Date")
 
-    if st.button("💾 Save Document"):
+    if st.button("🔐 Encrypt & Save Document"):
         if uploaded_file and owner:
-            safe_file_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
-            file_path = os.path.join(DOCUMENT_FOLDER, safe_file_name)
+            safe_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uploaded_file.name}"
+            storage_path = f"{owner}/{safe_name}.encrypted"
 
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+            try:
+                upload_encrypted_file(uploaded_file, storage_path)
 
-            df = pd.read_csv(DATA_FILE)
+                supabase.table("documents").insert({
+                    "file_name": uploaded_file.name,
+                    "owner": owner,
+                    "document_type": doc_type,
+                    "notes": notes,
+                    "upload_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "expiry_date": str(expiry_date) if has_expiry else "",
+                    "storage_path": storage_path
+                }).execute()
 
-            new_data = {
-                "File Name": safe_file_name,
-                "Owner": owner,
-                "Document Type": doc_type,
-                "Notes": notes,
-                "Upload Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Expiry Date": str(expiry_date) if has_expiry else "",
-                "File Path": file_path
-            }
+                st.success("✅ Document encrypted and saved securely!")
+                st.rerun()
 
-            df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
-            df.to_csv(DATA_FILE, index=False)
-
-            st.success("✅ Document saved successfully!")
-            st.rerun()
+            except Exception as e:
+                st.error("Upload failed.")
+                st.code(str(e))
         else:
             st.error("Please upload a file and enter owner name.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+# ---------- Smart Search ----------
 elif menu == "Smart Search":
     st.header("🔍 Smart Search")
 
-    df = pd.read_csv(DATA_FILE)
-
     search = st.text_input(
         "Search anything",
-        placeholder="Example: Parth marksheet, passport, insurance, medical report"
+        placeholder="Example: Parth passport, insurance, marksheet"
     )
 
     if search:
-        search_words = search.lower().split()
+        words = search.lower().split()
 
         def smart_match(row):
-            combined_text = (
-                str(row["Owner"]) + " " +
-                str(row["Document Type"]) + " " +
-                str(row["Notes"]) + " " +
-                str(row["File Name"]) + " " +
-                str(row["Expiry Date"])
+            text = (
+                str(row.get("owner", "")) + " " +
+                str(row.get("document_type", "")) + " " +
+                str(row.get("notes", "")) + " " +
+                str(row.get("file_name", "")) + " " +
+                str(row.get("expiry_date", ""))
             ).lower()
-
-            return all(word in combined_text for word in search_words)
+            return all(word in text for word in words)
 
         results = df[df.apply(smart_match, axis=1)]
 
@@ -261,55 +300,43 @@ elif menu == "Smart Search":
 
         for _, row in results.iterrows():
             st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader(row["file_name"])
+            st.write("👤 Owner:", row["owner"])
+            st.write("📄 Type:", row["document_type"])
+            st.write("📝 Notes:", row["notes"])
+            st.write("📅 Uploaded:", row["upload_date"])
+            st.write("⏳ Expiry:", row["expiry_date"] if row["expiry_date"] else "No expiry date")
 
-            st.subheader(row["File Name"])
-            st.write("👤 Owner:", row["Owner"])
-            st.write("📄 Type:", row["Document Type"])
-            st.write("📝 Notes:", row["Notes"])
-            st.write("📅 Uploaded:", row["Upload Date"])
-            st.write("⏳ Expiry:", row["Expiry Date"] if str(row["Expiry Date"]) != "nan" else "No expiry date")
+            try:
+                file_bytes = download_decrypted_file(row["storage_path"])
+                st.download_button(
+                    "⬇️ Download Decrypted Document",
+                    file_bytes,
+                    file_name=row["file_name"]
+                )
 
-            file_path = row["File Path"]
+                if str(row["file_name"]).lower().endswith(("jpg", "jpeg", "png")):
+                    st.image(file_bytes, caption=row["file_name"], use_container_width=True)
 
-            if os.path.exists(file_path):
-                if str(row["File Name"]).lower().endswith(("jpg", "jpeg", "png")):
-                    st.image(file_path, caption=row["File Name"], use_container_width=True)
-
-                elif str(row["File Name"]).lower().endswith("pdf"):
-                    with open(file_path, "rb") as pdf_file:
-                        pdf_bytes = pdf_file.read()
-
-                    st.download_button(
-                        "⬇️ Download PDF",
-                        pdf_bytes,
-                        file_name=row["File Name"],
-                        mime="application/pdf"
-                    )
-
-                    st.info("PDF preview is limited in Streamlit. Use download to view clearly.")
-
-                with open(file_path, "rb") as f:
-                    st.download_button(
-                        "⬇️ Download Document",
-                        f,
-                        file_name=row["File Name"]
-                    )
-            else:
-                st.error("File not found in documents folder.")
+            except Exception as e:
+                st.error("Unable to open file.")
+                st.code(str(e))
 
             st.markdown('</div>', unsafe_allow_html=True)
+
+# ---------- View ----------
 elif menu == "View All Documents":
     st.header("📁 All Stored Documents")
-    df = pd.read_csv(DATA_FILE)
 
     if len(df) == 0:
         st.info("No documents uploaded yet.")
     else:
         st.dataframe(
-            df[["File Name", "Owner", "Document Type", "Upload Date", "Expiry Date"]],
+            df[["file_name", "owner", "document_type", "upload_date", "expiry_date"]],
             use_container_width=True
         )
 
+# ---------- Expiry ----------
 elif menu == "Expiry Reminders":
     st.header("📅 Expiry Reminders")
 
@@ -319,23 +346,20 @@ elif menu == "Expiry Reminders":
     if len(expired_docs) > 0:
         st.subheader("🚨 Expired Documents")
         st.dataframe(
-            expired_docs[["File Name", "Owner", "Document Type", "Expiry Date"]],
+            expired_docs[["file_name", "owner", "document_type", "expiry_date"]],
             use_container_width=True
         )
 
     if len(expiring_soon) > 0:
         st.subheader("⚠️ Expiring Within 60 Days")
         st.dataframe(
-            expiring_soon[["File Name", "Owner", "Document Type", "Expiry Date"]],
+            expiring_soon[["file_name", "owner", "document_type", "expiry_date"]],
             use_container_width=True
         )
 
+# ---------- AI ----------
 elif menu == "Vault AI Assistant":
     st.header("🤖 Vault AI Assistant")
-
-    df = pd.read_csv(DATA_FILE)
-
-    st.write("Ask questions about your stored family documents.")
 
     user_query = st.text_input(
         "Ask Vault AI",
@@ -345,23 +369,22 @@ elif menu == "Vault AI Assistant":
     if user_query:
         if len(df) == 0:
             st.info("No documents stored yet.")
-
         else:
             vault_data = df[
-                ["File Name", "Owner", "Document Type", "Notes", "Upload Date", "Expiry Date"]
+                ["file_name", "owner", "document_type", "notes", "upload_date", "expiry_date"]
             ].to_string(index=False)
 
             prompt = f"""
 You are Vault AI, a smart assistant for a family document vault.
 
-Use only the document data given below.
-Do not make up any document.
-Give clear and short answers.
+Use only the document data below.
+Do not make up documents.
+Answer clearly and shortly.
 
 Document Data:
 {vault_data}
 
-User Question:
+Question:
 {user_query}
 
 Answer:
@@ -372,38 +395,40 @@ Answer:
                     response = ai_model.generate_content(prompt)
                     st.success("🤖 Vault AI Answer")
                     st.write(response.text)
-
                 except Exception as e:
-                    st.error("AI assistant could not answer right now.")
+                    st.error("Vault AI error.")
                     st.code(str(e))
+
+# ---------- Delete ----------
 elif menu == "Delete Document":
     st.header("🗑️ Delete Document")
-    df = pd.read_csv(DATA_FILE)
 
     if len(df) == 0:
         st.info("No documents available.")
     else:
-        file_to_delete = st.selectbox("Select Document", df["File Name"])
-        st.warning("Deleting a document will remove it permanently.")
+        selected = st.selectbox("Select Document", df["file_name"])
+
+        st.warning("Deleting will permanently remove the document from cloud storage.")
 
         if st.button("🗑️ Delete Selected Document"):
-            selected_row = df[df["File Name"] == file_to_delete].iloc[0]
-            file_path = selected_row["File Path"]
+            row = df[df["file_name"] == selected].iloc[0]
 
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            try:
+                delete_file(row["storage_path"])
+                supabase.table("documents").delete().eq("id", int(row["id"])).execute()
 
-            df = df[df["File Name"] != file_to_delete]
-            df.to_csv(DATA_FILE, index=False)
+                st.success("✅ Document deleted successfully!")
+                st.rerun()
 
-            st.success("✅ Document deleted successfully!")
-            st.rerun()
+            except Exception as e:
+                st.error("Delete failed.")
+                st.code(str(e))
 
 st.markdown("""
 <hr>
 <div class="footer">
-<h3>🔐 Family Vault AI</h3>
+<h3>🔐 Family Vault AI - Secure Edition</h3>
 <p>Designed & Developed by <b>Parth</b> 🚀</p>
-<p>Secure • Smart • Family Friendly</p>
+<p>Encrypted • Private • Family Friendly</p>
 </div>
 """, unsafe_allow_html=True)
