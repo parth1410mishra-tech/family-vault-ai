@@ -1,3 +1,4 @@
+import bcrypt
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -20,7 +21,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 ENCRYPTION_KEY = st.secrets["ENCRYPTION_KEY"]
 
 BUCKET_NAME = "family-documents"
-APP_PASSWORD = "FamilyVault@2026#Secure!Parth"
+APP_PASSWORD_HASH = st.secrets["APP_PASSWORD_HASH"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 fernet = Fernet(ENCRYPTION_KEY.encode())
@@ -138,11 +139,11 @@ if not st.session_state.logged_in:
         password = st.text_input("Enter Password", type="password")
 
         if st.button("🚀 Login", use_container_width=True):
-            if password == APP_PASSWORD:
-                st.session_state.logged_in = True
-                st.rerun()
-            else:
-                st.error("Wrong password.")
+            if bcrypt.checkpw(password.encode(), APP_PASSWORD_HASH.encode()):
+    st.session_state.logged_in = True
+    st.rerun()
+else:
+    st.error("Wrong password.")
 
         st.info("Files are encrypted before cloud storage.")
         st.markdown('</div>', unsafe_allow_html=True)
