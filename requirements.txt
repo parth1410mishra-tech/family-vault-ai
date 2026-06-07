@@ -1,3 +1,6 @@
 streamlit
 pandas
 google-generativeai
+supabase
+cryptography
+bcrypt
