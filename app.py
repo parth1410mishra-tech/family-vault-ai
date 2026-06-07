@@ -140,10 +140,10 @@ if not st.session_state.logged_in:
 
         if st.button("🚀 Login", use_container_width=True):
             if bcrypt.checkpw(password.encode(), APP_PASSWORD_HASH.encode()):
-    st.session_state.logged_in = True
-    st.rerun()
-else:
-    st.error("Wrong password.")
+                    st.session_state.logged_in = True
+                    st.rerun()
+            else:
+                    st.error("Wrong password.")
 
         st.info("Files are encrypted before cloud storage.")
         st.markdown('</div>', unsafe_allow_html=True)
