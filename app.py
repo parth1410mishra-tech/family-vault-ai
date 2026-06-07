@@ -20,7 +20,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 ENCRYPTION_KEY = st.secrets["ENCRYPTION_KEY"]
 
 BUCKET_NAME = "family-documents"
-APP_PASSWORD = "family123"  # later we can hash this also
+APP_PASSWORD = "FamilyVault@2026#Secure!Parth"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 fernet = Fernet(ENCRYPTION_KEY.encode())
